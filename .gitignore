@@ -1,0 +1,67 @@
+# --- Dependencies & Build ---
+node_modules/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+dist/
+/build
+out/
+.next/
+.turbo/
+.cache/
+.temp/
+.tmp/
+*.tsbuildinfo
+
+# --- Environment Secrets & Databases ---
+# Highly recommended to keep these out of version control
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+*.db
+*.db-journal
+*.pem
+
+# --- Logs & Debugging ---
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+/coverage
+/.nyc_output
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# --- IDEs & Editors ---
+.DS_Store
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# --- Vercel & Deployment ---
+.vercel
+next-env.d.ts
+
+# --- Runtime Data ---
+pids
+*.pid
+*.seed
+*.pid.lock
