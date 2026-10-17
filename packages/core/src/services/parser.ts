@@ -1,10 +1,21 @@
 import LlamaCloud from "@llamaindex/llama-cloud";
 import { llamaParsePrompt } from "../lib/prompts";
-import { IngestionError } from "../types";
+import { IngestionError } from "../types/ingest.type";
 
-const llamaClient = new LlamaCloud({
-  apiKey: process.env.LLAMA_CLOUD_API_KEY,
-});
+let llamaClient: LlamaCloud | undefined;
+function getLlamaClient(): LlamaCloud {
+  if (!llamaClient) {
+    const apiKey = process.env.LLAMA_CLOUD_API_KEY;
+    if (!apiKey) {
+      throw new IngestionError(
+        "LLAMA_CLOUD_API_KEY environment variable is not set.",
+        "CONFIG_ERROR",
+      );
+    }
+    llamaClient = new LlamaCloud({ apiKey });
+  }
+  return llamaClient;
+}
 
 const MAX_POLL_RETRIES = 60; // 3-minute timeout (60 * 3000ms)
 const POLL_INTERVAL_MS = 3000;
@@ -13,6 +24,8 @@ export async function parseBrandBible(
   fileBuffer: Buffer,
   fileName: string,
 ): Promise<string> {
+  const llamaClient = getLlamaClient();
+
   try {
     console.log(`[Parser] Uploading ${fileName} to LlamaCloud...`);
 

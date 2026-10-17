@@ -3,7 +3,11 @@ import { geminiExtractionModel, voyageEmbeddingModel } from "../lib/models";
 import { extractionSystemPrompt } from "../lib/prompts";
 import { supabase, SUPABASE_TABLE } from "../lib/supabase";
 import { parseBrandBible } from "../services/parser";
-import { type IngestResult, BrandRuleSchema, IngestionError } from "../types";
+import {
+  type IngestResult,
+  BrandRuleSchema,
+  IngestionError,
+} from "../types/ingest.type";
 
 export async function ingestBrandBible(
   fileBuffer: Buffer,

@@ -12,7 +12,7 @@ import {
   type ContextReport,
   ContextStateAnnotation,
   ContextReportSchema,
-} from "../types";
+} from "../types/context.type";
 
 export async function contextRetrievalNode(state: ContextState) {
   let embedding: number[] = [];

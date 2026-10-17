@@ -11,7 +11,7 @@ import {
   type AuditState,
   AuditStateAnnotation,
   AuditReportSchema,
-} from "../types";
+} from "../types/audit.type";
 
 export async function retrievalNode(state: AuditState) {
   let embedding: number[] = [];

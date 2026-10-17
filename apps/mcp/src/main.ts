@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPTransport } from "@hono/mcp";
 import { serve } from "@hono/node-server";
 import z from "zod";
-import { getContext, runAuditCore, type AuditReport } from "@synapse/core";
+import { getContext } from "@synapse/core/context";
+import { runAuditCore, type AuditReport } from "@synapse/core/audit";
 
 const app = new Hono();
 

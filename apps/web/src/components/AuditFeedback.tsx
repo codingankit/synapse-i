@@ -149,7 +149,7 @@ export function AuditFeedback({
                           Suggested Fix
                         </span>
                         <p className="text-xs sm:text-sm text-slate-800 font-medium italic leading-relaxed">
-                          "{v.suggested_fix}"
+                          &ldquo;{v.suggested_fix}&rdquo;
                         </p>
                       </div>
                     </div>

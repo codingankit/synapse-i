@@ -1,4 +1,4 @@
-import { AuditReport } from "@synapse/core";
+import type { AuditReport } from "@synapse/core/audit";
 
 export interface ActionState {
   success: boolean;
@@ -45,4 +45,8 @@ export interface AuditFeedbackProps {
   auditResults: AuditReport | null;
   isAuditing: boolean;
   onClearAudit: () => void;
+}
+
+export interface ConsoleDashboardProps {
+  initialMemory: MemoryStatus;
 }
