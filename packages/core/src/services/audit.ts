@@ -1,229 +1,202 @@
-import { START, END, StateGraph } from "@langchain/langgraph";
-import { embed, rerank, generateText, Output } from "ai";
+import { START, END, StateGraph, Annotation } from "@langchain/langgraph";
+import { generateText, Output } from "ai";
+import { geminiAuditModel } from "../lib/models";
 import {
-  voyageEmbeddingModel,
-  voyageRerankingModel,
-  geminiAuditModel,
-} from "../lib/models";
-import { auditSystemPrompt } from "../lib/prompts";
-import { supabase } from "../lib/supabase";
+  auditSystemPrompt,
+  rewriteSystemPrompt,
+  renderBrandRules,
+  renderProposedContent,
+} from "../lib/prompts";
+import { errorMessage } from "../lib/errors";
+import { retrieveAtoms } from "./retrieval";
 import {
-  type AuditState,
-  AuditStateAnnotation,
-  AuditReportSchema,
+  AUDIT_PASS_THRESHOLD,
+  AuditLlmSchema,
+  type AuditFailure,
+  type AuditOptions,
+  type AuditOutcome,
+  type AuditReport,
 } from "../types/audit.type";
+import type { Atom } from "../types/retrieval.type";
 
-export async function retrievalNode(state: AuditState) {
-  let embedding: number[] = [];
+const MAX_REVISIONS_CAP = 3;
 
-  try {
-    const embedResult = await embed({
-      model: voyageEmbeddingModel,
-      value: state.content,
-      maxRetries: 2,
-    });
-    embedding = embedResult.embedding;
-    console.log(`Query embedding dim: ${embedding.length}`);
-  } catch (embedErr: any) {
-    console.error("Embedding generation failed in retrievalNode:", embedErr);
-    return {
-      retrievedAtoms: [],
-      retrievalError: {
-        type: "EMBEDDING_PROVIDER_ERROR",
-        message: embedErr?.message || "Failed to generate query embeddings.",
-      },
-    };
-  }
-
-  const { data: nodes, error: rpcError } = await supabase.rpc(
-    "match_hybrid_synapse",
-    {
-      query_text: state.content,
-      query_embedding: embedding,
-      match_count: 20,
-      filter: {},
-      rrf_k: 60,
-    },
-  );
-
-  if (rpcError) {
-    console.error(
-      "match_hybrid_synapse RPC failed:",
-      rpcError.message,
-      rpcError.details ?? "",
-      rpcError.hint ?? "",
-    );
-    return {
-      retrievedAtoms: [],
-      retrievalError: {
-        type: "DATABASE_RPC_ERROR",
-        message: `Supabase RPC error: ${rpcError.message}`,
-      },
-    };
-  }
-
-  console.log(`Retrieved ${nodes?.length ?? 0} nodes from Supabase`);
-
-  if (!nodes?.length) {
-    return {
-      retrievedAtoms: [],
-      retrievalError: {
-        type: "NO_BRAND_MEMORY_STORED",
-        message: "Database returned 0 records for this brand domain.",
-      },
-    };
-  }
-
-  const documents: string[] = nodes.map((row: any) =>
-    typeof row.content === "string" ? row.content : JSON.stringify(row.content),
-  );
-
-  try {
-    const { rerankedDocuments } = await rerank({
-      model: voyageRerankingModel,
-      query: state.content,
-      documents: documents,
-      topN: 10,
-      maxRetries: 2,
-    });
-
-    const retrievedAtoms: string[] = rerankedDocuments.map((item: any) => {
-      if (typeof item === "string") return item;
-      if (typeof item.document === "string") return item.document;
-      if (typeof item.text === "string") return item.text;
-      return String(item);
-    });
-
-    console.log(`Reranked down to ${retrievedAtoms.length} atoms`);
-    return { retrievedAtoms, retrievalError: null };
-  } catch (rerankErr: any) {
-    console.error(
-      "Rerank failed, falling back to top-10 vector nodes:",
-      rerankErr,
-    );
-
-    return {
-      retrievedAtoms: documents.slice(0, 10),
-      retrievalError: null,
-    };
-  }
+/** Last write wins; every field has an explicit default. */
+function lastWrite<T>(init: () => T) {
+  return Annotation<T>({ reducer: (_prev: T, next: T) => next, default: init });
 }
 
-export async function auditNode(
-  state: AuditState & {
-    retrievalError?: { type: string; message: string } | null;
-  },
-) {
-  if (!state.retrievedAtoms.length) {
-    const errType = state.retrievalError?.type || "NO_BRAND_MEMORY_STORED";
-    console.warn(
-      `auditNode received 0 atoms — Reason: ${errType}. Skipping Gemini call.`,
-    );
+const AuditState = Annotation.Root({
+  /** The current draft. Replaced by each successful rewrite. */
+  content: lastWrite<string>(() => ""),
+  /** The draft that `report` was actually computed for. */
+  auditedContent: lastWrite<string>(() => ""),
+  atoms: lastWrite<Atom[]>(() => []),
+  report: lastWrite<AuditReport | null>(() => null),
+  /** Set only when no report could be produced at all. */
+  failure: lastWrite<AuditFailure | null>(() => null),
+  /** Number of completed audits. */
+  iteration: lastWrite<number>(() => 0),
+  maxRevisions: lastWrite<number>(() => 0),
+  /** Set when the revise loop must stop (rewrite or re-audit failed). */
+  halted: lastWrite<boolean>(() => false),
+});
 
-    let ruleViolated = "Database Context Retrieval Failure";
-    let reason =
-      "No relevant brand guidelines, rules, or memory atoms were found in the database for this prompt.";
-    let suggestedFix =
-      "Verify that a Brand Bible has been ingested into Supabase.";
+type State = typeof AuditState.State;
+type Update = typeof AuditState.Update;
 
-    if (errType === "EMBEDDING_PROVIDER_ERROR") {
-      ruleViolated = "Embedding Service Unavailable";
-      reason = `Voyage Embedding API failed: ${state.retrievalError?.message}`;
-      suggestedFix =
-        "Check Voyage API credentials, quota, or status and retry.";
-    } else if (errType === "DATABASE_RPC_ERROR") {
-      ruleViolated = "Database Execution Failure";
-      reason = `Supabase RPC execution error: ${state.retrievalError?.message}`;
-      suggestedFix =
-        "Verify Supabase database migration and stored procedure match_hybrid_synapse signature.";
-    }
-
-    return {
-      report: {
-        status: "UNAUDITED" as const,
-        score: 0,
-        violations: [
-          {
-            rule_violated: ruleViolated,
-            reason: reason,
-            suggested_fix: suggestedFix,
-          },
-        ],
-        feedback: `Audit skipped due to ${ruleViolated.toLowerCase()}. No constraints evaluated.`,
-      },
-      iteration: state.iteration + 1,
-    };
+async function retrieveNode(state: State): Promise<Update> {
+  const result = await retrieveAtoms(state.content);
+  if (!result.ok) {
+    return { failure: { reason: result.reason, message: result.message } };
   }
+  return { atoms: result.atoms };
+}
 
-  console.log(`Auditing against ${state.retrievedAtoms.length} atoms`);
-
+async function auditNode(state: State): Promise<Update> {
   try {
     const { output } = await generateText({
       model: geminiAuditModel,
       maxRetries: 2,
-      output: Output.object({
-        schema: AuditReportSchema,
-      }),
+      output: Output.object({ schema: AuditLlmSchema }),
       system: auditSystemPrompt,
-      prompt: `
-        BRAND MEMORY:
-        ${state.retrievedAtoms.join("\n---\n")}
-
-        PROPOSED CONTENT:
-        ${state.content}
-      `,
+      prompt: [
+        renderBrandRules(state.atoms),
+        renderProposedContent(state.content),
+      ].join("\n\n"),
     });
 
+    // Prefer the bare rule text over the "[Type] [Category] [Context]" embedding string.
+    const ruleById = new Map(
+      state.atoms.map((a) => [
+        a.id,
+        typeof a.metadata.rule === "string" ? a.metadata.rule : a.content,
+      ]),
+    );
+    const report: AuditReport = {
+      // Derived here so status can never contradict score.
+      status: output.score >= AUDIT_PASS_THRESHOLD ? "PASS" : "FAIL",
+      score: output.score,
+      feedback: output.feedback,
+      violations: output.violations.map((v) => ({
+        ...v,
+        rule_text: ruleById.get(v.rule_id) ?? null,
+      })),
+    };
+
     console.log(
-      `Audit complete — score: ${output.score}, status: ${output.status}, violations: ${output.violations.length}`,
+      `[Audit] #${state.iteration + 1} score=${report.score} status=${report.status} violations=${report.violations.length}`,
     );
 
-    return { report: output, iteration: state.iteration + 1 };
-  } catch (err: any) {
-    console.error("Gemini Audit API call failed completely:", err);
-
     return {
-      report: {
-        status: "UNAUDITED" as const,
-        score: 0,
-        violations: [
-          {
-            rule_violated: "LLM Provider Unavailable",
-            reason: `Gemini service error: ${err?.message || "High demand / 503 status"}`,
-            suggested_fix: "Retry the audit request in a few moments.",
-          },
-        ],
-        feedback:
-          "Audit failed due to upstream model capacity limits or API timeouts. Please try again shortly.",
-      },
+      report,
+      auditedContent: state.content,
       iteration: state.iteration + 1,
+    };
+  } catch (err) {
+    console.error("[Audit] Gemini audit call failed:", err);
+    // A failed re-audit keeps the previous report instead of discarding it.
+    if (state.report) return { halted: true };
+    return {
+      failure: {
+        reason: "LLM_PROVIDER_ERROR",
+        message: errorMessage(err, "Audit model call failed."),
+      },
     };
   }
 }
 
-export async function runAuditCore(content: string) {
-  const workflow = new StateGraph(AuditStateAnnotation)
-    .addNode("retrieve", retrievalNode)
-    .addNode("audit", auditNode)
-    .addEdge(START, "retrieve")
-    .addEdge("retrieve", "audit")
-    .addEdge("audit", END);
+async function rewriteNode(state: State): Promise<Update> {
+  const report = state.report;
+  if (!report) return { halted: true };
 
-  const app = workflow.compile();
+  const violations = report.violations
+    .map(
+      (v) =>
+        `- [rule ${v.rule_id}] ${v.reason} Suggested fix: ${v.suggested_fix}`,
+    )
+    .join("\n");
 
-  const finalState = await app.invoke({
-    content,
-    retrievedAtoms: [],
-    report: null,
-    iteration: 0,
-  });
+  try {
+    const { text } = await generateText({
+      model: geminiAuditModel,
+      maxRetries: 2,
+      system: rewriteSystemPrompt,
+      prompt: [
+        renderBrandRules(state.atoms),
+        `<violations>\n${violations}\n</violations>`,
+        renderProposedContent(state.content),
+      ].join("\n\n"),
+    });
+
+    const revised = text.trim();
+    if (!revised) return { halted: true };
+    return { content: revised };
+  } catch (err) {
+    console.error("[Audit] Rewrite failed:", err);
+    return { halted: true };
+  }
+}
+
+function routeAfterRetrieve(state: State): "audit" | typeof END {
+  return state.failure ? END : "audit";
+}
+
+function routeAfterAudit(state: State): "rewrite" | typeof END {
+  if (state.halted || !state.report) return END;
+  if (state.report.status === "PASS") return END;
+  // `iteration` counts audits, so maxRevisions=N allows N+1 audits.
+  if (state.iteration > state.maxRevisions) return END;
+  return "rewrite";
+}
+
+function routeAfterRewrite(state: State): "audit" | typeof END {
+  return state.halted ? END : "audit";
+}
+
+/**
+ * retrieve -> audit -> (FAIL and revisions left? rewrite -> audit ...) -> END
+ * Compiled once at module scope.
+ */
+const auditGraph = new StateGraph(AuditState)
+  .addNode("retrieve", retrieveNode)
+  .addNode("audit", auditNode)
+  .addNode("rewrite", rewriteNode)
+  .addEdge(START, "retrieve")
+  .addConditionalEdges("retrieve", routeAfterRetrieve, ["audit", END])
+  .addConditionalEdges("audit", routeAfterAudit, ["rewrite", END])
+  .addConditionalEdges("rewrite", routeAfterRewrite, ["audit", END])
+  .compile();
+
+export async function runAudit(
+  content: string,
+  options: AuditOptions = {},
+): Promise<AuditOutcome> {
+  const maxRevisions = Math.min(
+    Math.max(Math.trunc(options.maxRevisions ?? 0), 0),
+    MAX_REVISIONS_CAP,
+  );
+
+  const final = await auditGraph.invoke({ content, maxRevisions });
+
+  if (!final.report) {
+    const failure: AuditFailure = final.failure ?? {
+      reason: "LLM_PROVIDER_ERROR",
+      message: "Audit produced no report.",
+    };
+    return { ok: false, ...failure };
+  }
 
   return {
-    success: true,
-    report: finalState.report,
+    ok: true,
+    report: final.report,
+    revisedContent:
+      final.auditedContent !== content ? final.auditedContent : null,
+    atoms: final.atoms,
     metadata: {
-      attempts: finalState.iteration,
-      atomsEvaluated: finalState.retrievedAtoms.length,
+      auditsRun: final.iteration,
+      revisionsApplied: Math.max(final.iteration - 1, 0),
+      atomsEvaluated: final.atoms.length,
     },
   };
 }

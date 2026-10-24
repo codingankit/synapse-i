@@ -6,6 +6,10 @@ export interface ActionState {
   error?: string | null;
 }
 
+export type AuditActionResult =
+  | { ok: true; report: AuditReport }
+  | { ok: false; message: string };
+
 export interface MemoryStatus {
   hasMemory: boolean;
   count: number;
@@ -43,6 +47,7 @@ export interface ExecutionTestbenchProps {
 
 export interface AuditFeedbackProps {
   auditResults: AuditReport | null;
+  errorMessage?: string | null;
   isAuditing: boolean;
   onClearAudit: () => void;
 }

@@ -2,6 +2,7 @@
 
 import { AuditFeedbackProps } from "@/types";
 import {
+  AlertTriangle,
   FileText,
   ShieldCheck,
   ShieldAlert,
@@ -11,10 +12,11 @@ import {
 
 export function AuditFeedback({
   auditResults,
+  errorMessage,
   isAuditing = false,
   onClearAudit,
 }: AuditFeedbackProps) {
-  const isPassing = (auditResults?.score ?? 0) >= 80;
+  const isPassing = auditResults?.status === "PASS";
 
   return (
     <div className="lg:col-span-5 flex flex-col h-auto lg:h-full bg-white min-h-112.5 lg:min-h-0">
@@ -29,7 +31,7 @@ export function AuditFeedback({
           </h2>
         </div>
 
-        {auditResults && (
+        {(auditResults || errorMessage) && (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -45,7 +47,24 @@ export function AuditFeedback({
       </div>
 
       {/* EMPTY STATE */}
-      {!auditResults ? (
+      {!auditResults && errorMessage ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 text-center space-y-3 sm:space-y-4 bg-slate-50/30 min-h-75 lg:min-h-0">
+          <div className="h-14 w-14 sm:h-16 sm:w-16 rounded-2xl bg-rose-50 border border-rose-200 shadow-xs flex items-center justify-center text-rose-500">
+            <AlertTriangle className="w-7 h-7 sm:w-8 sm:h-8" />
+          </div>
+          <div className="max-w-sm">
+            <p className="text-sm sm:text-base font-semibold text-slate-800">
+              Audit could not run
+            </p>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1.5 leading-relaxed">
+              {errorMessage}
+            </p>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1.5 leading-relaxed">
+              The content was not audited, so this is not a pass or a fail.
+            </p>
+          </div>
+        </div>
+      ) : !auditResults ? (
         <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 text-center space-y-3 sm:space-y-4 bg-slate-50/30 min-h-75 lg:min-h-0">
           <div className="h-14 w-14 sm:h-16 sm:w-16 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center text-slate-400">
             <FileText className="w-7 h-7 sm:w-8 sm:h-8" />
@@ -136,7 +155,7 @@ export function AuditFeedback({
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
                         <span className="text-[10px] sm:text-xs font-bold text-rose-600 uppercase tracking-wider truncate">
-                          Rule: {v.rule_violated}
+                          Rule: {v.rule_text ?? `Unknown rule (${v.rule_id})`}
                         </span>
                       </div>
 

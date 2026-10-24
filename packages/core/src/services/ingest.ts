@@ -1,13 +1,56 @@
 import { generateText, Output, embedMany } from "ai";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { geminiExtractionModel, voyageEmbeddingModel } from "../lib/models";
 import { extractionSystemPrompt } from "../lib/prompts";
+import { mapWithConcurrency } from "../lib/concurrency";
 import { supabase, SUPABASE_TABLE } from "../lib/supabase";
 import { parseBrandBible } from "../services/parser";
 import {
   type IngestResult,
+  type BrandRuleItem,
   BrandRuleSchema,
   IngestionError,
 } from "../types/ingest.type";
+
+const CHUNK_SIZE_CHARS = 8000;
+const EXTRACTION_CONCURRENCY = 3;
+const EMBED_BATCH_SIZE = 30;
+const DB_BATCH_SIZE = 50;
+
+type ExtractedRule = BrandRuleItem & { chunk_index: number };
+
+// Splits on markdown headers first, then paragraphs, so rules stay with their section.
+const splitter = RecursiveCharacterTextSplitter.fromLanguage("markdown", {
+  chunkSize: CHUNK_SIZE_CHARS,
+  chunkOverlap: 0,
+});
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[.,;:!"'`]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Same rule extracted from two chunks (or repeated in the bible) is stored once. */
+function dedupeRules(rules: ExtractedRule[]): ExtractedRule[] {
+  const seen = new Set<string>();
+  const unique: ExtractedRule[] = [];
+  for (const rule of rules) {
+    const key = [rule.is_negative, normalize(rule.context), normalize(rule.rule)].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(rule);
+  }
+  return unique;
+}
+
+/** `Type` is embedded so both the reranker and the audit LLM can see prohibitions. */
+function formatAtom(rule: BrandRuleItem): string {
+  const type = rule.is_negative ? "PROHIBITION" : "REQUIREMENT";
+  return `[Type: ${type}] [Category: ${rule.category}] [Context: ${rule.context}] Rule: ${rule.rule}`;
+}
 
 export async function ingestBrandBible(
   fileBuffer: Buffer,
@@ -41,18 +84,28 @@ export async function ingestBrandBible(
     };
   }
 
-  let output;
+  let extracted: ExtractedRule[];
   try {
-    const result = await generateText({
-      model: geminiExtractionModel,
-      maxRetries: 2,
-      system: extractionSystemPrompt,
-      output: Output.object({
-        schema: BrandRuleSchema,
-      }),
-      prompt: markdownText,
-    });
-    output = result.output;
+    const chunks = await splitter.splitText(markdownText);
+    console.log(`[Ingest] Split into ${chunks.length} chunk(s)`);
+
+    // All-or-nothing: a failed chunk fails the ingest instead of silently dropping rules.
+    const perChunk = await mapWithConcurrency(
+      chunks,
+      EXTRACTION_CONCURRENCY,
+      async (chunk, chunkIndex) => {
+        const { output } = await generateText({
+          model: geminiExtractionModel,
+          maxRetries: 2,
+          system: extractionSystemPrompt,
+          output: Output.object({ schema: BrandRuleSchema }),
+          prompt: chunk,
+        });
+        return (output.rules ?? []).map((r) => ({ ...r, chunk_index: chunkIndex }));
+      },
+    );
+
+    extracted = perChunk.flat();
   } catch (llmErr: any) {
     console.error("[Ingest] LLM rule extraction failed:", llmErr);
     return {
@@ -62,21 +115,22 @@ export async function ingestBrandBible(
     };
   }
 
-  if (!output.rules?.length) {
+  const rules = dedupeRules(extracted);
+
+  if (!rules.length) {
     return {
       success: false,
       error: "No actionable brand rule atoms were identified in this document.",
       stage: "NO_RULES_FOUND",
     };
   }
-  console.log(`[Ingest] Extracted ${output.rules.length} rule atoms`);
-
-  const formattedValues = output.rules.map(
-    (r) => `[Category: ${r.category}] [Context: ${r.context}] Rule: ${r.rule}`,
+  console.log(
+    `[Ingest] Extracted ${extracted.length} rule atoms, ${rules.length} after dedupe`,
   );
 
-  let embeddings: number[][] = [];
-  const EMBED_BATCH_SIZE = 30;
+  const formattedValues = rules.map(formatAtom);
+
+  const embeddings: number[][] = [];
 
   try {
     for (let i = 0; i < formattedValues.length; i += EMBED_BATCH_SIZE) {
@@ -97,10 +151,10 @@ export async function ingestBrandBible(
     };
   }
 
-  if (embeddings.length !== output.rules.length) {
+  if (embeddings.length !== rules.length) {
     return {
       success: false,
-      error: `Embedding mismatch: Expected ${output.rules.length} vectors, got ${embeddings.length}`,
+      error: `Embedding mismatch: Expected ${rules.length} vectors, got ${embeddings.length}`,
       stage: "EMBEDDING_MISMATCH",
     };
   }
@@ -109,17 +163,17 @@ export async function ingestBrandBible(
     `[Ingest] Generated ${embeddings.length} embeddings (dim: ${embeddings[0]?.length ?? "unknown"})`,
   );
 
-  const rows = output.rules.map((rule, i) => ({
+  const ingestedAt = new Date().toISOString();
+  const rows = rules.map((rule, i) => ({
     content: formattedValues[i],
     metadata: {
-      ...rule,
+      ...rule, // category, rule, context, is_negative, source_quote, chunk_index
       source_file: fileName,
-      ingested_at: new Date().toISOString(),
+      ingested_at: ingestedAt,
     },
     embedding: embeddings[i],
   }));
 
-  const DB_BATCH_SIZE = 50;
   let totalInserted = 0;
   const insertedIds: string[] = []; // Tracking for rollback on failure
 

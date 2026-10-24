@@ -1,2 +1,2 @@
-export { runAuditCore } from "./services/audit";
+export { runAudit } from "./services/audit";
 export * from "./types/audit.type";

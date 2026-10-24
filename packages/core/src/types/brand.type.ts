@@ -9,11 +9,18 @@ export const BrandRuleItemSchema = z.object({
   rule: z.string().describe("The core actionable rule or constraint."),
   context: z
     .string()
-    .describe("Background context explaining when or why this rule applies."),
+    .describe(
+      "The platform or situation where this rule applies (e.g., Instagram, Print, Email). Use 'Global' if unspecified.",
+    ),
   is_negative: z
     .boolean()
     .describe(
       "True if this specifies something prohibited (banned word, negative constraint).",
+    ),
+  source_quote: z
+    .string()
+    .describe(
+      "A short verbatim excerpt (max ~200 chars) from the source text that this rule was derived from.",
     ),
 });
 

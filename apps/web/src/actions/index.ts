@@ -2,11 +2,13 @@
 
 import { clearMemoryCore, getMemoryStatusCore } from "@synapse/core/memory";
 import { ingestBrandBible } from "@synapse/core/ingest";
-import { runAuditCore } from "@synapse/core/audit";
+import { runAudit } from "@synapse/core/audit";
 import { revalidatePath } from "next/cache";
-import type { ActionState } from "@/types";
+import type { ActionState, AuditActionResult } from "@/types";
 
-export async function handleIngestion(formData: FormData): Promise<ActionState> {
+export async function handleIngestion(
+  formData: FormData,
+): Promise<ActionState> {
   const file = formData.get("brandBible") as File;
   if (!file) {
     return { success: false, error: "No file found" };
@@ -32,6 +34,15 @@ export async function clearMemory() {
   return result;
 }
 
-export async function runAudit(content: string) {
-  return await runAuditCore(content);
+export async function runAuditContent(
+  content: string,
+): Promise<AuditActionResult> {
+  const outcome = await runAudit(content);
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      message: `Audit unavailable (${outcome.reason}): ${outcome.message}`,
+    };
+  }
+  return { ok: true, report: outcome.report };
 }

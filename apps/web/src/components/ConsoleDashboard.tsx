@@ -11,7 +11,7 @@ import { Layers } from "lucide-react";
 import type { AuditReport } from "@synapse/core/audit";
 import {
   handleIngestion,
-  runAudit,
+  runAuditContent,
   getMemoryStatus,
   clearMemory,
 } from "@/actions";
@@ -29,6 +29,7 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [content, setContent] = useState("");
   const [auditResults, setAuditResults] = useState<AuditReport | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -38,7 +39,10 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
     setRuleCount(status.count || 0);
   }, []);
 
-  const [ingestState, ingestAction, isUploading] = useActionState<ActionState, FormData>(
+  const [ingestState, ingestAction, isUploading] = useActionState<
+    ActionState,
+    FormData
+  >(
     async (_prevState: ActionState, formData: FormData) => {
       const result = await handleIngestion(formData);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -50,7 +54,9 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
     { success: false, fileName: null, error: null },
   );
 
-  const showError = Boolean(ingestState.error && dismissedError !== ingestState.error);
+  const showError = Boolean(
+    ingestState.error && dismissedError !== ingestState.error,
+  );
 
   const confirmClear = () => {
     if (isAuditing || isClearing) return;
@@ -61,6 +67,7 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
         setHasMemory(false);
         setRuleCount(0);
         setAuditResults(null);
+        setAuditError(null);
       }
     });
   };
@@ -69,9 +76,18 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
     if (!content.trim() || isAuditing || isClearing) return;
 
     startAudit(async () => {
-      const response = await runAudit(content.trim());
-      if (response.success && response.report) {
-        setAuditResults(response.report);
+      setAuditError(null);
+      try {
+        const response = await runAuditContent(content.trim());
+        if (response.ok) {
+          setAuditResults(response.report);
+        } else {
+          setAuditResults(null);
+          setAuditError(response.message);
+        }
+      } catch {
+        setAuditResults(null);
+        setAuditError("Audit request failed. Please try again.");
       }
     });
   };
@@ -125,8 +141,12 @@ export function ConsoleDashboard({ initialMemory }: ConsoleDashboardProps) {
 
         <AuditFeedback
           auditResults={auditResults}
+          errorMessage={auditError}
           isAuditing={isAuditing}
-          onClearAudit={() => setAuditResults(null)}
+          onClearAudit={() => {
+            setAuditResults(null);
+            setAuditError(null);
+          }}
         />
       </div>
 
