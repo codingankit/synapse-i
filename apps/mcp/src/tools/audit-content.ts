@@ -31,15 +31,12 @@ export function registerAuditContent(server: McpServer) {
         violations: z.array(
           z.object({
             rule_id: z.string(),
-            rule: z.string().nullable(),
+            rule: z.string().optional(),
             reason: z.string(),
             suggested_fix: z.string(),
           }),
         ),
-        revised_content: z
-          .string()
-          .nullable()
-          .describe("The revised draft the report was computed for, if any."),
+        revised_content: z.string().optional(),
         audits_run: z.number(),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -71,11 +68,11 @@ export function registerAuditContent(server: McpServer) {
             feedback: report.feedback,
             violations: report.violations.map((v) => ({
               rule_id: v.rule_id,
-              rule: v.rule_text,
+              ...(v.rule_text !== null && { rule: v.rule_text }),
               reason: v.reason,
               suggested_fix: v.suggested_fix,
             })),
-            revised_content: revisedContent,
+            ...(revisedContent !== null && { revised_content: revisedContent }),
             audits_run: metadata.auditsRun,
           },
         };
