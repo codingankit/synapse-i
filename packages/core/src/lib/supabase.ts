@@ -5,4 +5,4 @@ export const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-export const SUPABASE_TABLE = process.env.SUPABASE_TABLE!;
+export const SUPABASE_TABLE = "synapse_memory" as const;

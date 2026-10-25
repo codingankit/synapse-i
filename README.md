@@ -66,12 +66,11 @@ Synapse stores rule atoms in Postgres via Supabase, using `pgvector` for embeddi
 -- 0. Extensions
 ---------------------------------------------------------
 create extension if not exists vector;
-create extension if not exists pg_trgm; -- optional, useful for fuzzy text ops later
+create extension if not exists pg_trgm;
 
 
 ---------------------------------------------------------
 -- 1. Table: synapse_memory
---    (rename to match your SUPABASE_TABLE env value)
 ---------------------------------------------------------
 create table if not exists synapse_memory (
   id          uuid primary key default gen_random_uuid(),
@@ -192,19 +191,21 @@ create or replace function match_hybrid_synapse (
   query_embedding vector(1024),
   match_count     int default 10,
   filter          jsonb default '{}'::jsonb,
-  rrf_k           int default 60 -- 60 is standard RRF constant per original Cormack et al. paper
+  rrf_k           int default 60
 )
-returns table (
-  id           uuid,
-  content      text,
-  metadata     jsonb,
-  hybrid_score float
-)
+returns table (id uuid, content text, metadata jsonb, hybrid_score float)
 language plpgsql
+stable
 as $$
 begin
   return query
-  with semantic as (
+  with q as (
+    select nullif(
+      replace(plainto_tsquery('english', query_text)::text, ' & ', ' | '),
+      ''
+    )::tsquery as tsq
+  ),
+  semantic as (
     select
       sm.id,
       row_number() over (order by sm.embedding <=> query_embedding) as rank
@@ -216,31 +217,22 @@ begin
   keyword as (
     select
       sm.id,
-      row_number() over (
-        order by ts_rank_cd(sm.fts_content, websearch_to_tsquery('english', query_text)) desc
-      ) as rank
-    from synapse_memory sm
-    where query_text != ''
-      and sm.fts_content @@ websearch_to_tsquery('english', query_text)
-      and ts_rank_cd(sm.fts_content, websearch_to_tsquery('english', query_text)) > 0
+      row_number() over (order by ts_rank_cd(sm.fts_content, q.tsq) desc) as rank
+    from synapse_memory sm, q
+    where q.tsq is not null
+      and sm.fts_content @@ q.tsq
       and (filter = '{}'::jsonb or sm.metadata @> filter)
+    order by ts_rank_cd(sm.fts_content, q.tsq) desc
     limit match_count * 2
   ),
   fused as (
     select
       coalesce(s.id, k.id) as id,
-      (
-        coalesce(1.0 / (rrf_k + s.rank), 0.0) +
-        coalesce(1.0 / (rrf_k + k.rank), 0.0)
-      )::double precision as score
+      (coalesce(1.0 / (rrf_k + s.rank), 0.0) + coalesce(1.0 / (rrf_k + k.rank), 0.0))::double precision as score
     from semantic s
     full outer join keyword k on s.id = k.id
   )
-  select
-    sm.id,
-    sm.content,
-    sm.metadata,
-    fused.score as hybrid_score
+  select sm.id, sm.content, sm.metadata, fused.score as hybrid_score
   from fused
   join synapse_memory sm on sm.id = fused.id
   order by fused.score desc
