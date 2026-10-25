@@ -9,8 +9,8 @@
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
     "build": "pnpm clean && pnpm typecheck && tsup",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "inspector": "pnpm dlx -y @modelcontextprotocol/inspector",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "inspector": "pnpm dlx -y @modelcontextprotocol/inspector"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

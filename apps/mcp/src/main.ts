@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { StreamableHTTPTransport } from "@hono/mcp";
 import { serve } from "@hono/node-server";
-import { createMcpServer } from "./server";
+import { createMcpServer } from "@/server";
 
 const app = new Hono();
 

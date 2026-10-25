@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerGetContext } from "@/tools/get-context";
-import { registerAuditContent } from "@/tools/audit-content";
+import { registerAllTools } from "@/tools";
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -8,8 +7,7 @@ export function createMcpServer(): McpServer {
     version: "1.0.0",
   });
 
-  registerGetContext(server);
-  registerAuditContent(server);
+  registerAllTools(server);
 
   return server;
 }
