@@ -1,22 +1,21 @@
 {
   "compilerOptions": {
     "target": "ES2024",
+    "lib": ["ES2024"],
+    "types": ["node"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
-    "lib": ["ES2024", "ESNext.AsyncIterable"],
-    "types": ["node"],
-    "sourceMap": true,
     "resolveJsonModule": true,
+    "esModuleInterop": true,
     "isolatedModules": true,
-    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true
   },
   "include": ["src/**/*"]
 }

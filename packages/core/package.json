@@ -3,8 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,12 +25,11 @@
       "import": "./dist/memory.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup",
     "dev": "tsup --watch",
+    "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -47,7 +44,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^24.19.2",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }

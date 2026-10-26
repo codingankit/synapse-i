@@ -20,7 +20,7 @@ export function ConfirmClearModal({
         </h3>
         <p className="text-xs sm:text-sm text-slate-500 font-medium mt-2 leading-relaxed">
           This will permanently purge all {ruleCount} indexed brand rules from
-          Supabase. You will need to upload a new Brand Bible PDF.
+          Database. You will need to upload a new Brand Bible PDF.
         </p>
 
         <div className="flex items-center gap-3 w-full mt-6 sm:mt-7">
